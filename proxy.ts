@@ -1,4 +1,4 @@
-// Next.js 미들웨어 — 인증 보호 라우트 설정
+// Next.js 16 Proxy — 인증 보호 라우트 설정 (middleware.ts에서 리네임)
 
 import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
@@ -8,7 +8,7 @@ const PROTECTED_PATHS = ['/dashboard', '/simulator', '/optimizer', '/keywords', 
 // 인증된 사용자가 접근 불가한 경로
 const AUTH_PATHS = ['/login', '/register'];
 
-export default auth((req) => {
+export const proxy = auth((req) => {
   const { pathname } = req.nextUrl;
   const isLoggedIn = !!req.auth;
 
