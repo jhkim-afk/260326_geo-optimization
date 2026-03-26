@@ -1,0 +1,164 @@
+// GEO SaaS 플랫폼 전체 DB 스키마 — PostgreSQL 16 + Prisma 7
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── 인증 관련 모델 (NextAuth.js v5) ────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?   // 이메일 로그인 시 bcrypt 해시
+  plan          Plan      @default(FREE)
+  dailyUsage    Int       @default(0)
+  lastUsageReset DateTime @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  brand         Brand?
+  analyses      GeoAnalysis[]
+  simulations   AiSimulation[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── 브랜드/온보딩 ───────────────────────────────────────────────────────────
+
+model Brand {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  name           String
+  category       String
+  websiteUrl     String?
+  mainProducts   String[] // 주요 상품 목록
+  targetKeywords String[] // 분석 키워드
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  competitors Competitor[]
+  analyses    GeoAnalysis[]
+}
+
+model Competitor {
+  id         String   @id @default(cuid())
+  brandId    String
+  name       String
+  websiteUrl String?
+  createdAt  DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+// ─── GEO 분석 결과 ───────────────────────────────────────────────────────────
+
+model GeoAnalysis {
+  id               String   @id @default(cuid())
+  userId           String
+  brandId          String
+  contentInput     String   @db.Text // 분석한 콘텐츠 원문
+  contentUrl       String?            // 분석 URL (있을 경우)
+
+  // GEO 점수 분해
+  totalScore       Float
+  citationRate     Float
+  contentStructure Float
+  authorityScore   Float
+  brandConsistency Float
+
+  breakdown        Json     // GeoScoreBreakdown[]
+  recommendations  Json     // GeoRecommendation[]
+
+  cachedAt  DateTime @default(now())
+  expiresAt DateTime // 캐시 만료 시각 (24시간)
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([brandId, cachedAt])
+}
+
+// ─── AI 시뮬레이션 결과 ─────────────────────────────────────────────────────
+
+model AiSimulation {
+  id               String   @id @default(cuid())
+  userId           String
+  query            String   @db.Text
+  answer           String   @db.Text
+  mentionedBrands  String[]
+  sourceTypesCited String[]
+  answerConfidence String   // "high" | "medium" | "low"
+  contentGaps      String[]
+  brandMentioned   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ─── 키워드 변환 결과 캐시 ──────────────────────────────────────────────────
+
+model KeywordConversion {
+  id                 String   @id @default(cuid())
+  userId             String
+  keyword            String
+  generatedQuestions Json     // GeneratedQuestion[]
+  cachedAt           DateTime @default(now())
+  expiresAt          DateTime
+
+  @@index([userId, keyword])
+}
+
+// ─── 요금제 ────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE   // 하루 10회
+  PRO    // 하루 100회
+  AGENCY // 무제한
+}
