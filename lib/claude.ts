@@ -1,6 +1,7 @@
-// Claude API 클라이언트 및 타입 정의 — 서버사이드 전용
+// Gemini AI 클라이언트 및 타입 정의 — 서버사이드 전용
+// 모델: gemini-3-flash-preview (Google Generative AI)
 
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ─── 타입 정의 ────────────────────────────────────────────────────────────────
 
@@ -37,20 +38,22 @@ export interface KeywordConversionResult {
   questions: GeneratedQuestion[];
 }
 
-// ─── Claude 클라이언트 싱글턴 ─────────────────────────────────────────────────
+// ─── 사용 모델 상수 ──────────────────────────────────────────────────────────
 
-let claudeClient: Anthropic | null = null;
+const GEMINI_MODEL = 'gemini-3-flash-preview';
 
-function getClaudeClient(): Anthropic {
-  if (!claudeClient) {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.');
+// ─── Gemini 클라이언트 싱글턴 ─────────────────────────────────────────────────
+
+let geminiClient: GoogleGenerativeAI | null = null;
+
+function getGeminiClient(): GoogleGenerativeAI {
+  if (!geminiClient) {
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY 환경변수가 설정되지 않았습니다.');
     }
-    claudeClient = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
-  return claudeClient;
+  return geminiClient;
 }
 
 // GEO 시뮬레이션 시스템 프롬프트
@@ -77,31 +80,28 @@ Your natural answer here
 
 /**
  * AI 답변 시뮬레이터: 주어진 질문에 대해 AI가 어떻게 답변하는지 시뮬레이션
- * Claude API를 SSE 스트리밍으로 호출
+ * Gemini API를 SSE 스트리밍으로 호출
  */
 export async function* simulateAiAnswer(
   query: string,
   brandName?: string,
 ): AsyncGenerator<string> {
-  const client = getClaudeClient();
+  const client = getGeminiClient();
+  const model = client.getGenerativeModel({
+    model: GEMINI_MODEL,
+    systemInstruction: SIMULATION_SYSTEM_PROMPT,
+  });
 
   const userMessage = brandName
     ? `Query: ${query}\n\nContext: The user's brand is "${brandName}". Check if this brand gets mentioned naturally in the answer.`
     : `Query: ${query}`;
 
-  const stream = await client.messages.stream({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1500,
-    system: SIMULATION_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
-  });
+  const result = await model.generateContentStream(userMessage);
 
-  for await (const chunk of stream) {
-    if (
-      chunk.type === 'content_block_delta' &&
-      chunk.delta.type === 'text_delta'
-    ) {
-      yield chunk.delta.text;
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) {
+      yield text;
     }
   }
 }
@@ -151,10 +151,10 @@ export async function generateOptimizationSuggestions(
   brandName: string,
   targetKeywords: string[],
 ): Promise<OptimizationResult> {
-  const client = getClaudeClient();
+  const client = getGeminiClient();
 
   const systemPrompt = `You are a GEO (Generative Engine Optimization) expert specializing in e-commerce content.
-Analyze the given content and provide up to 5 specific, actionable optimization suggestions to improve how AI search engines like ChatGPT, Claude, and Perplexity cite and mention this brand/product.
+Analyze the given content and provide up to 5 specific, actionable optimization suggestions to improve how AI search engines like ChatGPT, Gemini, and Perplexity cite and mention this brand/product.
 
 GEO Optimization Principles:
 1. Citable content: Include statistics, specific numbers, and clear facts
@@ -177,21 +177,19 @@ Respond in Korean with this exact JSON format:
   "overallAssessment": "전반적인 GEO 현황 평가 (2-3문장)"
 }`;
 
+  const model = client.getGenerativeModel({
+    model: GEMINI_MODEL,
+    systemInstruction: systemPrompt,
+  });
+
   const userMessage = `Brand: ${brandName}
 Target Keywords: ${targetKeywords.join(', ')}
 
 Content to analyze:
 ${content}`;
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 3000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-  });
-
-  const rawText =
-    response.content[0].type === 'text' ? response.content[0].text : '';
+  const result = await model.generateContent(userMessage);
+  const rawText = result.response.text();
 
   // JSON 블록 추출
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
@@ -213,10 +211,10 @@ export async function convertKeywordToQuestions(
   brandName: string,
   category: string,
 ): Promise<KeywordConversionResult> {
-  const client = getClaudeClient();
+  const client = getGeminiClient();
 
   const systemPrompt = `You are an expert in understanding how consumers use AI search engines for e-commerce decisions.
-Convert e-commerce keywords into natural questions that real users would ask AI assistants like ChatGPT or Claude.
+Convert e-commerce keywords into natural questions that real users would ask AI assistants like ChatGPT or Gemini.
 
 For each question, assess the GEO readiness score (0-100) based on how well a typical brand in this category would be positioned to appear in AI answers.
 
@@ -234,19 +232,17 @@ Respond in Korean with this exact JSON format:
 
 Generate exactly 10 questions covering different user intents: recommendation, comparison, information, and purchase decision.`;
 
+  const model = client.getGenerativeModel({
+    model: GEMINI_MODEL,
+    systemInstruction: systemPrompt,
+  });
+
   const userMessage = `Keyword: ${keyword}
 Brand: ${brandName}
 Category: ${category}`;
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-  });
-
-  const rawText =
-    response.content[0].type === 'text' ? response.content[0].text : '';
+  const result = await model.generateContent(userMessage);
+  const rawText = result.response.text();
 
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
