@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/db';
 import { brandSetupSchema } from '@/lib/validations';
+import { Prisma } from '@prisma/client';
 
 /** 브랜드 정보 조회 */
 export async function GET() {
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
     const userId = session.user.id;
 
     // 기존 브랜드 삭제 후 재생성 (경쟁사 목록 갱신 포함)
-    const brand = await prisma.$transaction(async (tx) => {
+    const brand = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.brand.findUnique({ where: { userId } });
       if (existing) {
         await tx.competitor.deleteMany({ where: { brandId: existing.id } });
